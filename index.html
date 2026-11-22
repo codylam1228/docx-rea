@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>docx-rea Studio | Zero-Backend Word Template Generator</title>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.3/dist/docx-preview.min.js"></script>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #f1f5f9; --muted: #94a3b8; --accent: #38bdf8; --ok: #22c55e; --warn: #f59e0b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; }
+    header { padding: 10px 18px; background: var(--card); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #0c4a6e; color: var(--accent); }
+    .badge.ok { background: #14532d; color: #86efac; }
+    .badge.warn { background: #78350f; color: #fde68a; }
+    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    button, label.btn { background: var(--accent); color: #0f172a; border: none; padding: 7px 13px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; }
+    button.secondary { background: #334155; color: var(--text); }
+    button.success { background: #22c55e; color: #052e16; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    main { display: grid; grid-template-columns: 480px 1fr; flex: 1; overflow: hidden; }
+    .sidebar { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; padding: 12px; gap: 10px; }
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 11px; }
+    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+    .panel h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); }
+    pre { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; max-height: 165px; overflow-y: auto; background: #0b1120; padding: 8px; border-radius: 6px; border: 1px solid #1e293b; }
+    textarea { width: 100%; height: 145px; background: #0b1120; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-family: ui-monospace, monospace; font-size: 12px; resize: vertical; }
+    input[type="text"] { width: 100%; background: #0b1120; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 12.5px; margin-bottom: 8px; }
+    details { margin-top: 8px; font-size: 12px; color: var(--muted); }
+    details summary { cursor: pointer; user-select: none; }
+    .preview-pane { background: #cbd5e1; overflow: auto; padding: 24px; display: flex; justify-content: center; align-items: flex-start; }
+    #docx-render-target { background: white; box-shadow: 0 10px 25px rgba(0,0,0,0.25); min-height: 400px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <strong>docx-rea Studio</strong>
+      <span id="py-status" class="badge">啟動 Pyodide WASM 中...</span>
+      <span id="mcp-status" class="badge warn" title="零 API Key：本地生成 Prompt，貼去 Gemini/Grok 網頁版輸出 JSON">零 API Key 雙模式</span>
+    </div>
+    <div class="toolbar">
+      <label class="btn" for="file-input">1. 載入 .docx 母版</label>
+      <input id="file-input" type="file" accept=".docx" hidden />
+      <button id="reset-btn" class="secondary" disabled>還原母版</button>
+      <button id="download-btn" class="success" disabled>4. 下載新 .docx</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="sidebar">
+      <div class="panel">
+        <div class="panel-header">
+          <h3>步驟 2：本地生成結構 Prompt（免 API Key）</h3>
+        </div>
+        <input id="user-goal" type="text" placeholder="輸入新內容要求（例：照原格式出 8 題中三轉主項新練習）" />
+        <button id="copy-prompt-btn" style="width:100%;" disabled>一鍵複製完整 Prompt（貼去 Gemini / Grok 網頁版）</button>
+        <details>
+          <summary>檢視 / 手動複製生成的 Prompt 內容</summary>
+          <textarea id="prompt-preview-box" readonly style="height:110px; margin-top:6px; font-size:11px;" placeholder="載入母版並輸入要求後，此處會即時顯示完整 Prompt..."></textarea>
+        </details>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h3>步驟 3：貼上 Gemini / Grok 輸出嘅 JSON</h3>
+        </div>
+        <textarea id="json-plan-input" placeholder='貼入 AI 回覆嘅 JSON（支援 ```json ... ``` 自動清理），然後按下方套用按鈕...'></textarea>
+        <button id="apply-plan-btn" class="success" style="margin-top:8px; width:100%;" disabled>套用 JSON 生成新文件（100% 保留原格式）</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h3>文件結構座標（Inspect Map）與修改紀錄</h3>
+        </div>
+        <pre id="agent-log">等待載入 .docx 範本...</pre>
+      </div>
+    </div>
+
+    <div class="preview-pane">
+      <div id="docx-render-target" style="padding:40px; color:#334155;">
+        1. 點擊左上角「1. 載入 .docx 母版」<br/><br/>
+        2. 輸入新題目/內容要求並按「一鍵複製完整 Prompt」<br/><br/>
+        3. 貼去 online Gemini 或 Grok 對話框取得 JSON<br/><br/>
+        4. 將 JSON 貼回左側並按「套用 JSON 生成新文件」
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const worker = new Worker("./worker.js");
+    const pending = new Map();
+    let reqSeq = 1;
+    let currentFileName = "document.docx";
+    let currentBuffer = null;
+    let latestInspectMap = "";
+
+    const pyStatusEl = document.getElementById("py-status");
+    const mcpStatusEl = document.getElementById("mcp-status");
+    const logEl = document.getElementById("agent-log");
+    const downloadBtn = document.getElementById("download-btn");
+    const resetBtn = document.getElementById("reset-btn");
+    const userGoalInput = document.getElementById("user-goal");
+    const copyPromptBtn = document.getElementById("copy-prompt-btn");
+    const promptPreviewBox = document.getElementById("prompt-preview-box");
+    const applyPlanBtn = document.getElementById("apply-plan-btn");
+    const renderTarget = document.getElementById("docx-render-target");
+
+    function appendLog(title, body) {
+      const ts = new Date().toLocaleTimeString();
+      logEl.textContent = `[${ts}] ${title}
+${body}
+
+` + logEl.textContent;
+    }
+
+    function callWorker(action, payload = {}, transfer = []) {
+      const id = reqSeq++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ id, action, payload }, transfer);
+      });
+    }
+
+    async function renderDocxPreview(arrayBuffer) {
+      renderTarget.innerHTML = "";
+      await docx.renderAsync(arrayBuffer, renderTarget, null, {
+        inWrapper: false,
+        ignoreWidth: false,
+        ignoreHeight: false,
+      });
+    }
+
+    function buildPromptText() {
+      const goal = userGoalInput.value.trim() || "保留原有格式與排版，生成一套全新內容替換現有項目。";
+      return `你係一個專業 Word (.docx) 結構化內容生成助手。請根據以下【目標文件結構座標圖】同【用戶要求】，輸出一個純 JSON 指令包，用嚟喺保留 100% 原有字體、框線、欄寬同縮排格式下生成新文件。
+
+【用戶要求】
+${goal}
+
+【目標文件結構座標圖】
+${latestInspectMap}
+
+【嚴格輸出規則】
+1. 只輸出合法 JSON（唔好加任何解釋文字），頂層結構必須符合：
+{
+  "delete_targets": [
+    { "target": "多餘舊行或舊段落座標（例如 t[0].r[1]）", "anchor_text": "該行原文子字串" }
+  ],
+  "clones": [
+    {
+      "target": "作為格式母版嘅表格行或段落座標（例如 t[0].r[0] 或 p[5]）",
+      "anchor_text": "該座標原文入面嘅精準子字串（用作防錯校驗）",
+      "mode": "replace",
+      "items": [
+        ["第1行第1格新內容", "第1行第2格新內容"],
+        ["第2行第1格新內容", "第2行第2格新內容"]
+      ]
+    }
+  ],
+  "edits": [
+    {
+      "target": "其他需要修改嘅段落/頁首/頁尾/儲存格座標（例如 hf[0].header.p[0] 或 p[0]）",
+      "anchor_text": "該座標原文嘅精準子字串",
+      "new_text": "修改後嘅文字"
+    }
+  ]
+}
+2. 多行題目/列表整份替換規則（極重要）：如果原文件有多行舊題目（例如 t[0].r[0] 至 t[0].r[15]），請揀第 1 行（t[0].r[0]）放入 "clones"（設 "mode": "replace" 生成全部新題目），同時必須將其餘唔再需要嘅舊行（t[0].r[1] 至 t[0].r[15]）全部列入 "delete_targets"，否則舊題目會殘留喺新題目後面！
+3. 如無需刪除舊行、無需複製或無需單獨修改，對應陣列請留空 []。
+4. 數學公式規則：如果需要寫新數學公式，請用行內 LaTeX 包住，例如 $\\frac{3x + a}{x - b} = k$ 或 $x^2 - 5x + 6 = 0$（注意 JSON 字串內所有反斜線必須雙寫為 \\），系統會自動轉成 Word 原生方程式 (<m:oMath>)；如果保留原句舊公式，請保留原本嘅 [MATH:0] 標記。
+5. 保留圖片請保留原本嘅 [IMG:0] 標記。`;
+    }
+
+    function refreshPromptPreview() {
+      if (!latestInspectMap) return;
+      promptPreviewBox.value = buildPromptText();
+    }
+
+    userGoalInput.addEventListener("input", refreshPromptPreview);
+
+    worker.onmessage = async (e) => {
+      const msg = e.data;
+      if (msg.type === "status") {
+        pyStatusEl.textContent = msg.text;
+        if (msg.stage === "ready") pyStatusEl.className = "badge ok";
+        if (msg.stage === "error") pyStatusEl.className = "badge warn";
+        return;
+      }
+      const req = pending.get(msg.id);
+      if (!req) return;
+      pending.delete(msg.id);
+
+      if (!msg.ok) {
+        req.reject(new Error(msg.error));
+        return;
+      }
+      if (msg.fileBuffer) {
+        currentBuffer = msg.fileBuffer;
+        downloadBtn.disabled = false;
+        await renderDocxPreview(currentBuffer.slice(0));
+      }
+      req.resolve(msg.result);
+    };
+
+    // 1. Load Template
+    document.getElementById("file-input").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      currentFileName = file.name;
+      const buf = await file.arrayBuffer();
+      currentBuffer = buf.slice(0);
+      await renderDocxPreview(buf.slice(0));
+      downloadBtn.disabled = false;
+      resetBtn.disabled = false;
+      copyPromptBtn.disabled = false;
+      applyPlanBtn.disabled = false;
+
+      const inspectOut = await callWorker("load_file", { buffer: buf }, [buf]);
+      latestInspectMap = inspectOut;
+      refreshPromptPreview();
+      appendLog("結構探測完成 (docx_inspect)", inspectOut);
+    });
+
+    // Reset to original uploaded template
+    resetBtn.addEventListener("click", async () => {
+      const inspectOut = await callWorker("reset_template");
+      latestInspectMap = inspectOut;
+      refreshPromptPreview();
+      appendLog("已還原至原始母版", inspectOut);
+    });
+
+    // 2. Copy Ready-to-Paste Prompt for Online Gemini / Grok (Zero API Key)
+    copyPromptBtn.addEventListener("click", async () => {
+      const promptText = buildPromptText();
+      promptPreviewBox.value = promptText;
+      try {
+        await navigator.clipboard.writeText(promptText);
+      } catch (_) {
+        promptPreviewBox.parentElement.open = true;
+        promptPreviewBox.select();
+        document.execCommand("copy");
+      }
+      const oldText = copyPromptBtn.textContent;
+      copyPromptBtn.textContent = "已複製 Prompt！快去 Gemini / Grok 網頁版貼上";
+      setTimeout(() => { copyPromptBtn.textContent = oldText; }, 2500);
+    });
+
+    // 3. Apply JSON Plan from Gemini / Grok
+    applyPlanBtn.addEventListener("click", async () => {
+      let raw = document.getElementById("json-plan-input").value.trim();
+      if (!raw) return;
+      raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      try {
+        const plan = JSON.parse(raw);
+        const report = await callWorker("docx_apply_plan", { plan });
+        const refreshedMap = await callWorker("docx_inspect", { max_items: 600 });
+        latestInspectMap = refreshedMap;
+        refreshPromptPreview();
+        appendLog("JSON 計劃執行成功 (Compact Diff)", report);
+      } catch (err) {
+        appendLog("JSON 執行失敗", err.message);
+      }
+    });
+
+    // 4. Download Result
+    downloadBtn.addEventListener("click", () => {
+      if (!currentBuffer) return;
+      const blob = new Blob([currentBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = currentFileName.replace(/\.docx$/i, "_new.docx");
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // Optional WebMCP registration
+    (async () => {
+      const mc = document.modelContext || navigator.modelContext;
+      if (!mc || typeof mc.registerTool !== "function") return;
+      await mc.registerTool({
+        name: "docx_apply_plan",
+        description: "Apply a unified {delete_targets, clones, edits} JSON plan to generate a new .docx preserving 100% original formatting and native LaTeX math.",
+        inputSchema: { type: "object", required: ["plan"], properties: { plan: { type: "object" } } },
+        execute: async ({ plan }) => {
+          const report = await callWorker("docx_apply_plan", { plan });
+          appendLog("WebMCP 調用 docx_apply_plan", report);
+          return report;
+        }
+      });
+      mcpStatusEl.textContent = "JSON + WebMCP 雙模式就緒";
+      mcpStatusEl.className = "badge ok";
+    })();
+  </script>
+</body>
+</html>
